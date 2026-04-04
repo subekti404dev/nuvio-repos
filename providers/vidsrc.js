@@ -43,6 +43,7 @@ var __async = (__this, __arguments, generator) => {
 // src/vidsrc/constants.js
 var TMDB_API_KEY = "68e094699525b18a70bab2f86b1fa706";
 var EMBED_BASE = "https://www.2embed.cc";
+var LOOKMOVIE_BASE = "https://lookmovie2.skin";
 var USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
 // src/vidsrc/http.js
@@ -53,9 +54,11 @@ function makeRequest(_0) {
       "Accept": "application/json,*/*",
       "Accept-Language": "en-US,en;q=0.5",
       "Accept-Encoding": "gzip, deflate",
-      "Connection": "keep-alive",
-      "Referer": EMBED_BASE
+      "Connection": "keep-alive"
     }, options.headers);
+    if (options.referer) {
+      defaultHeaders["Referer"] = options.referer;
+    }
     try {
       const response = yield fetch(url, __spreadValues({
         method: options.method || "GET",
@@ -91,6 +94,35 @@ function getTmdbInfo(tmdbId, mediaType) {
 }
 
 // src/vidsrc/extractor.js
+const vm = require('vm');
+function unPack(code) {
+  var result = code;
+  const context = vm.createContext({
+    eval: function(c) {
+      result = c;
+    },
+    window: {},
+    document: {}
+  });
+  try {
+    vm.runInNewContext(code, context);
+  } catch (e) {}
+  return result;
+}
+function recursivelyUnPack(code) {
+  let result = code;
+  let iterations = 0;
+  const maxIterations = 10;
+  while (iterations < maxIterations) {
+    const hasNestedEval = result.includes("eval(function(p,a,c,k,e,d)");
+    if (!hasNestedEval) {
+      break;
+    }
+    result = unPack(result);
+    iterations++;
+  }
+  return result;
+}
 function extractStreamFromPage(contentType, contentId, seasonNum, episodeNum) {
   return __async(this, null, function* () {
     let embedUrl;
@@ -100,63 +132,94 @@ function extractStreamFromPage(contentType, contentId, seasonNum, episodeNum) {
       embedUrl = `${EMBED_BASE}/embed/${contentType}/${contentId}/${seasonNum}/${episodeNum}`;
     }
     console.log(`[Vidsrc] Fetching: ${embedUrl}`);
-    const response = yield makeRequest(embedUrl);
+    const response = yield makeRequest(embedUrl, { referer: EMBED_BASE });
     const html = yield response.text();
     console.log(`[Vidsrc] HTML length: ${html.length} characters`);
-    let masterPlaylistUrl = null;
+    let streamUrl = null;
     const dataSrcMatch = html.match(/data-src=["']([^"']+)["']/i);
     if (dataSrcMatch) {
-      masterPlaylistUrl = dataSrcMatch[1];
-      console.log("[Vidsrc] Found data-src URL:", masterPlaylistUrl);
+      streamUrl = dataSrcMatch[1];
+      console.log("[Vidsrc] Found data-src URL:", streamUrl);
     }
-    if (!masterPlaylistUrl) {
+    if (!streamUrl) {
       const iframeMatch = html.match(/<iframe[^>]*src=["']([^"']+)["'][^>]*>/i);
       if (iframeMatch) {
-        masterPlaylistUrl = iframeMatch[1];
-        console.log("[Vidsrc] Found iframe src:", masterPlaylistUrl);
+        streamUrl = iframeMatch[1];
+        console.log("[Vidsrc] Found iframe src:", streamUrl);
       }
     }
-    if (!masterPlaylistUrl || masterPlaylistUrl === "about:blank") {
+    if (!streamUrl || streamUrl === "about:blank") {
       const locationMatch = html.match(/window\.location\s*=\s*["']([^"']+)["']/i);
       if (locationMatch) {
-        masterPlaylistUrl = locationMatch[1];
-        console.log("[Vidsrc] Found window.location:", masterPlaylistUrl);
+        streamUrl = locationMatch[1];
+        console.log("[Vidsrc] Found window.location:", streamUrl);
       }
     }
-    if (!masterPlaylistUrl) {
-      const scriptMatches = html.match(new RegExp("<script[^>]*>(.*?)<\\/script>", "gs"));
-      if (scriptMatches) {
-        for (const script of scriptMatches) {
-          if (script.includes("go(")) {
-            const goMatch = script.match(/go\(["']([^"']+)["']\)/i);
-            if (goMatch) {
-              masterPlaylistUrl = goMatch[1];
-              console.log("[Vidsrc] Found go() URL:", masterPlaylistUrl);
-              break;
-            }
+    if (streamUrl && !streamUrl.startsWith("http")) {
+      if (streamUrl.startsWith("//")) {
+        streamUrl = "https:" + streamUrl;
+      } else if (streamUrl.startsWith("/")) {
+        streamUrl = EMBED_BASE + streamUrl;
+      }
+    }
+    if (streamUrl && streamUrl.includes("streamsrcs.2embed.cc")) {
+      console.log("[Vidsrc] Following streamsrcs redirect to lookmovie2...");
+      const playerResponse = yield makeRequest(streamUrl, { referer: EMBED_BASE });
+      const playerHtml = yield playerResponse.text();
+      const iframeSrcMatch = playerHtml.match(/<iframe[^>]*src=["']([^"']+)["'][^>]*id=["']framesrc["']/i) ||
+                            playerHtml.match(/<iframe[^>]*id=["']framesrc["'][^>]*src=["']([^"']+)["']/i);
+      if (iframeSrcMatch && iframeSrcMatch[1] && !iframeSrcMatch[1].includes("about:blank")) {
+        let iframeUrl = iframeSrcMatch[1];
+        if (!iframeUrl.startsWith("http")) {
+          if (iframeUrl.startsWith("/")) {
+            iframeUrl = LOOKMOVIE_BASE + iframeUrl;
+          } else if (iframeUrl.includes("/e/")) {
+            iframeUrl = LOOKMOVIE_BASE + iframeUrl;
+          } else {
+            iframeUrl = "https://lookmovie2.skin/e/" + iframeUrl;
           }
-          const videoMatch = script.match(/["']?(https?:\/\/[^"'`\s]+\.(?:m3u8|mp4)[^"'`\s]*)/i);
-          if (videoMatch) {
-            masterPlaylistUrl = videoMatch[1];
-            console.log("[Vidsrc] Found video URL in script:", masterPlaylistUrl);
-            break;
+        }
+        streamUrl = iframeUrl;
+        console.log("[Vidsrc] Found framesrc URL:", streamUrl);
+      }
+    }
+    if (streamUrl && streamUrl.includes("lookmovie2.skin")) {
+      console.log("[Vidsrc] Fetching lookmovie2 page to extract m3u8...");
+      const lookmovieResponse = yield makeRequest(streamUrl, { referer: LOOKMOVIE_BASE });
+      const lookmovieHtml = yield lookmovieResponse.text();
+      const evalStart = lookmovieHtml.indexOf('eval(function(p,a,c,k,e,d)');
+      if (evalStart !== -1) {
+        const afterEval = lookmovieHtml.substring(evalStart);
+        const scriptEnd = afterEval.indexOf('</script>');
+        if (scriptEnd > 0) {
+          const packedCode = afterEval.substring(0, scriptEnd).trim();
+          const unpacked = recursivelyUnPack(packedCode);
+          const m3u8Matches = unpacked.match(/https?:\/\/[^"'`\s]+\.m3u8[^"'`\s]*/g);
+          if (m3u8Matches && m3u8Matches.length > 0) {
+            streamUrl = m3u8Matches[0];
+            console.log("[Vidsrc] Unpacked m3u8 URL:", streamUrl.substring(0, 100));
           }
         }
       }
+      if (!streamUrl || streamUrl.includes("lookmovie2.skin/e/")) {
+        const m3u8Match = lookmovieHtml.match(/(https?:\/\/[^"'`\s]+\.m3u8[^"'`\s]*)/i);
+        if (m3u8Match) {
+          streamUrl = m3u8Match[1];
+          console.log("[Vidsrc] Found direct m3u8 URL:", streamUrl);
+        }
+      }
     }
-    if (!masterPlaylistUrl) {
+    if (!streamUrl) {
       console.log("[Vidsrc] No master playlist URL found");
       return null;
     }
-    if (!masterPlaylistUrl.startsWith("http")) {
-      if (masterPlaylistUrl.startsWith("//")) {
-        masterPlaylistUrl = "https:" + masterPlaylistUrl;
-      } else if (masterPlaylistUrl.startsWith("/")) {
-        masterPlaylistUrl = EMBED_BASE + masterPlaylistUrl;
+    if (!streamUrl.startsWith("http")) {
+      if (streamUrl.startsWith("//")) {
+        streamUrl = "https:" + streamUrl;
       }
     }
-    console.log(`[Vidsrc] Final URL: ${masterPlaylistUrl}`);
-    return { masterPlaylistUrl };
+    console.log(`[Vidsrc] Final URL: ${streamUrl}`);
+    return { masterPlaylistUrl: streamUrl };
   });
 }
 
@@ -181,8 +244,8 @@ function getStreams(tmdbId, mediaType = "movie", seasonNum = null, episodeNum = 
         quality: "Auto",
         type: "direct",
         headers: {
-          "Referer": EMBED_BASE,
-          "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+          "Referer": LOOKMOVIE_BASE,
+          "User-Agent": USER_AGENT
         }
       }];
       console.log("[Vidsrc] Successfully processed 1 stream with Auto quality");
