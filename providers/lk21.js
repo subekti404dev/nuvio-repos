@@ -449,4 +449,107 @@ function getStreams(tmdbId, mediaType = "movie", seasonNum = null, episodeNum = 
   });
 }
 
-module.exports = { getStreams };
+// Search for content by query string
+// Note: Site uses JavaScript for search, so we browse popular/latest pages
+function search(query) {
+  return __async(this, null, function* () {
+    console.log(`[LK21] Searching for: ${query}`);
+
+    try {
+      // Search functionality is JavaScript-based, browse popular page instead
+      const popularUrl = `${BASE_URL}/populer`;
+      const response = yield makeRequest(popularUrl);
+      const html = yield response.text();
+
+      const results = [];
+
+      // Look for movie/TV links - site uses various formats
+      // Match patterns like: /avatar-fire-ash-2025, /papa-zola-movie-2025
+      const linkPatterns = [
+        /href="\/([a-z0-9-]+-\d{4})"/gi,
+        /href="https:\/\/tv10\.lk21official\.cc\/([a-z0-9-]+-\d{4})"/gi
+      ];
+
+      for (const pattern of linkPatterns) {
+        let match;
+        while ((match = pattern.exec(html)) !== null) {
+          const slug = match[1];
+          // Filter out non-content pages
+          if (slug &&
+              !slug.includes('page') &&
+              !slug.includes('search') &&
+              !slug.includes('genre') &&
+              !slug.includes('country') &&
+              !slug.includes('year') &&
+              !results.includes(slug)) {
+            results.push(slug);
+          }
+        }
+      }
+
+      // Filter by query if provided
+      let filteredResults = results;
+      if (query) {
+        const queryLower = query.toLowerCase().replace(/\s+/g, '-');
+        // Match any part of the query
+        const queryParts = queryLower.split(/[\s-]+/);
+        filteredResults = results.filter(slug => {
+          // Check if all query parts are in the slug
+          return queryParts.every(part => slug.includes(part));
+        });
+      }
+
+      console.log(`[LK21] Found ${filteredResults.length} results (from ${results.length} total)`);
+      return filteredResults;
+    } catch (error) {
+      console.error(`[LK21] Search error: ${error.message}`);
+      return [];
+    }
+  });
+}
+
+// Get stream by slug directly (no TMDB lookup)
+function getStreamBySlug(slug) {
+  return __async(this, null, function* () {
+    console.log(`[LK21] Fetching stream for slug: ${slug}`);
+
+    try {
+      const contentUrl = slug.startsWith('http') ? slug : `${BASE_URL}/${slug}`;
+      const streamData = yield extractStreamFromPage(contentUrl);
+
+      if (streamData && streamData.masterPlaylistUrl) {
+        const headers = {
+          "Referer": "https://emturbovid.com/",
+          "User-Agent": USER_AGENT,
+          "Origin": "https://emturbovid.com"
+        };
+
+        // Extract title from slug
+        const titleParts = slug.replace(/-\d{4}$/, '').split('-');
+        const title = titleParts.map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+        const yearMatch = slug.match(/(\d{4})$/);
+        const year = yearMatch ? yearMatch[1] : 'Unknown';
+
+        const nuvioStreams = [{
+          name: "LK21",
+          title: `${title} (${year})`,
+          url: streamData.masterPlaylistUrl,
+          quality: "Auto",
+          type: "direct",
+          headers: headers
+        }];
+
+        console.log("[LK21] Successfully found stream");
+        return nuvioStreams;
+      }
+
+      console.log("[LK21] No stream data found for slug");
+      return [];
+    } catch (error) {
+      console.error(`[LK21] Error in getStreamBySlug: ${error.message}`);
+      return [];
+    }
+  });
+}
+
+module.exports = { getStreams, search, getStreamBySlug };
