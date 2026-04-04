@@ -42,7 +42,7 @@ var __async = (__this, __arguments, generator) => {
 };
 
 // Constants
-var BASE_URL = "https://tv.lk21official.love";
+var BASE_URL = "https://tv10.lk21official.cc";
 var SERIES_URL = "https://series.lk21.de";
 var USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
@@ -85,28 +85,29 @@ function searchContent(title, year, mediaType, seasonNum, episodeNum) {
       return yield searchSeriesContent(title, year, seasonNum, episodeNum);
     }
 
-    // Movies use tv.lk21official.love domain
+    // Movies use tv10.lk21official.cc domain
     const slugVariations = [];
 
-    // Clean title - remove special chars and extra words
+    // Clean title - remove special chars and common words
     let cleanTitle = title.toLowerCase()
-      .replace(/[^a-z0-9\s:-]/g, '')
+      .replace(/[^a-z0-9\s-]/g, '')  // Remove colons and other special chars
       .trim();
 
-    // Remove common subtitles/separators like ": The Movie", " - Chapter 1", etc.
-    cleanTitle = cleanTitle.replace(/[:\-–]\s*(the|a|an)\s*(movie|series|show|chapter|season).*$/i, '').trim();
+    // Remove "and" from title (site often omits it)
+    cleanTitle = cleanTitle.replace(/\s+and\s+/g, ' ');
 
-    // Normalize spaces
+    // Remove common subtitles like "The Movie", etc.
+    cleanTitle = cleanTitle.replace(/\s*(the|a|an)\s*(movie|series|show).*$/i, '').trim();
+
+    // Normalize spaces and dashes
     cleanTitle = cleanTitle.replace(/\s+/g, '-').replace(/-+/g, '-');
 
     const typeSlug = 'movie';
 
-    // Try variations
-    // 1. title-type-year (e.g., papa-zola-movie-2025)
+    // Try variations - site uses title-year format
+    slugVariations.push(`${cleanTitle}-${year}`);
     slugVariations.push(`${cleanTitle}-${typeSlug}-${year}`);
-
-    // 2. Just title (rare but possible)
-    slugVariations.push(cleanTitle);
+    slugVariations.push(`${cleanTitle}`);
 
     console.log(`[LK21] Trying slugs: ${slugVariations.join(', ')}`);
 
