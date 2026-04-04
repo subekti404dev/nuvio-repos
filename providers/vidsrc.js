@@ -60,6 +60,9 @@ function makeRequest(_0) {
     if (options.referer) {
       defaultHeaders["Referer"] = options.referer;
     }
+    if (options.cookie) {
+      defaultHeaders["Cookie"] = options.cookie;
+    }
     try {
       const response = yield fetch(url, __spreadValues({
         method: options.method || "GET",
@@ -190,6 +193,12 @@ function extractStreamFromPage(contentType, contentId, seasonNum, episodeNum) {
       console.log("[Vidsrc] Fetching lookmovie2 page to extract m3u8...");
       const lookmovieResponse = yield makeRequest(streamUrl, { referer: LOOKMOVIE_BASE });
       const lookmovieHtml = yield lookmovieResponse.text();
+      const lookmovieCookies = lookmovieResponse.headers.get("set-cookie");
+      let streamCookies = null;
+      if (lookmovieCookies) {
+        streamCookies = lookmovieCookies.split(",").map(c => c.split(";")[0].trim()).join("; ");
+        console.log("[Vidsrc] Captured cookies:", streamCookies.substring(0, 50) + "...");
+      }
       const evalStart = lookmovieHtml.indexOf('eval(function(p,a,c,k,e,d)');
       if (evalStart !== -1) {
         const afterEval = lookmovieHtml.substring(evalStart);
@@ -210,6 +219,9 @@ function extractStreamFromPage(contentType, contentId, seasonNum, episodeNum) {
           streamUrl = m3u8Match[1];
           console.log("[Vidsrc] Found direct m3u8 URL:", streamUrl);
         }
+      }
+      if (streamCookies && !streamUrl.includes("lookmovie2.skin/e/")) {
+        return { masterPlaylistUrl: streamUrl, referer: LOOKMOVIE_BASE, cookies: streamCookies };
       }
     }
     if (streamUrl && streamUrl.includes("play.xpass.top")) {
@@ -275,17 +287,21 @@ function getStreams(tmdbId, mediaType = "movie", seasonNum = null, episodeNum = 
         console.log("[Vidsrc] No stream data found");
         return [];
       }
-      const { masterPlaylistUrl, referer } = streamData;
+      const { masterPlaylistUrl, referer, cookies } = streamData;
+      const headers = {
+        "Referer": referer || LOOKMOVIE_BASE,
+        "User-Agent": USER_AGENT
+      };
+      if (cookies) {
+        headers["Cookie"] = cookies;
+      }
       const nuvioStreams = [{
         name: "Vidsrc",
         title: "Auto Quality Stream",
         url: masterPlaylistUrl,
         quality: "Auto",
         type: "direct",
-        headers: {
-          "Referer": referer || LOOKMOVIE_BASE,
-          "User-Agent": USER_AGENT
-        }
+        headers: headers
       }];
       console.log("[Vidsrc] Successfully processed 1 stream with Auto quality");
       return nuvioStreams;
