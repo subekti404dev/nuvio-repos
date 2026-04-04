@@ -44,6 +44,7 @@ var __async = (__this, __arguments, generator) => {
 var TMDB_API_KEY = "68e094699525b18a70bab2f86b1fa706";
 var EMBED_BASE = "https://www.2embed.cc";
 var LOOKMOVIE_BASE = "https://lookmovie2.skin";
+var XPASS_BASE = "https://play.xpass.top";
 var USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
 // src/vidsrc/http.js
@@ -163,7 +164,7 @@ function extractStreamFromPage(contentType, contentId, seasonNum, episodeNum) {
       }
     }
     if (streamUrl && streamUrl.includes("streamsrcs.2embed.cc")) {
-      console.log("[Vidsrc] Following streamsrcs redirect to lookmovie2...");
+      console.log("[Vidsrc] Following streamsrcs redirect...");
       const playerResponse = yield makeRequest(streamUrl, { referer: EMBED_BASE });
       const playerHtml = yield playerResponse.text();
       const iframeSrcMatch = playerHtml.match(/<iframe[^>]*src=["']([^"']+)["'][^>]*id=["']framesrc["']/i) ||
@@ -175,6 +176,8 @@ function extractStreamFromPage(contentType, contentId, seasonNum, episodeNum) {
             iframeUrl = LOOKMOVIE_BASE + iframeUrl;
           } else if (iframeUrl.includes("/e/")) {
             iframeUrl = LOOKMOVIE_BASE + iframeUrl;
+          } else if (iframeUrl.includes("tv/")) {
+            iframeUrl = XPASS_BASE + "/e/" + iframeUrl;
           } else {
             iframeUrl = "https://lookmovie2.skin/e/" + iframeUrl;
           }
@@ -209,6 +212,38 @@ function extractStreamFromPage(contentType, contentId, seasonNum, episodeNum) {
         }
       }
     }
+    if (streamUrl && streamUrl.includes("play.xpass.top")) {
+      console.log("[Vidsrc] Fetching xpass page to extract m3u8...");
+      const xpassResponse = yield makeRequest(streamUrl, { referer: XPASS_BASE });
+      const xpassHtml = yield xpassResponse.text();
+      const dataUrlMatch = xpassHtml.match(/var\s+dataUrl\s*=\s*["']([^"']+)["']/);
+      if (dataUrlMatch) {
+        const dataUrl = XPASS_BASE + dataUrlMatch[1];
+        console.log("[Vidsrc] Fetching data endpoint:", dataUrl);
+        try {
+          const dataResponse = yield makeRequest(dataUrl);
+          const dataJson = yield dataResponse.json();
+          if (Array.isArray(dataJson) && dataJson.length > 0) {
+            const firstSource = dataJson[0];
+            if (firstSource.url) {
+              const playlistUrl = XPASS_BASE + firstSource.url;
+              console.log("[Vidsrc] Fetching playlist:", playlistUrl);
+              const playlistResponse = yield makeRequest(playlistUrl);
+              const playlistJson = yield playlistResponse.json();
+              if (playlistJson.playlist && playlistJson.playlist[0] && playlistJson.playlist[0].sources) {
+                const source = playlistJson.playlist[0].sources[0];
+                if (source.file && source.type === "hls") {
+                  streamUrl = source.file;
+                  console.log("[Vidsrc] Found xpass m3u8 URL:", streamUrl.substring(0, 100));
+                }
+              }
+            }
+          }
+        } catch (e) {
+          console.log("[Vidsrc] xpass extraction error:", e.message);
+        }
+      }
+    }
     if (!streamUrl) {
       console.log("[Vidsrc] No master playlist URL found");
       return null;
@@ -219,7 +254,11 @@ function extractStreamFromPage(contentType, contentId, seasonNum, episodeNum) {
       }
     }
     console.log(`[Vidsrc] Final URL: ${streamUrl}`);
-    return { masterPlaylistUrl: streamUrl };
+    let referer = LOOKMOVIE_BASE;
+    if (streamUrl.includes("xpass") || streamUrl.includes("clarynova") || streamUrl.includes("wyzie")) {
+      referer = XPASS_BASE;
+    }
+    return { masterPlaylistUrl: streamUrl, referer: referer };
   });
 }
 
@@ -236,7 +275,7 @@ function getStreams(tmdbId, mediaType = "movie", seasonNum = null, episodeNum = 
         console.log("[Vidsrc] No stream data found");
         return [];
       }
-      const { masterPlaylistUrl } = streamData;
+      const { masterPlaylistUrl, referer } = streamData;
       const nuvioStreams = [{
         name: "Vidsrc",
         title: "Auto Quality Stream",
@@ -244,7 +283,7 @@ function getStreams(tmdbId, mediaType = "movie", seasonNum = null, episodeNum = 
         quality: "Auto",
         type: "direct",
         headers: {
-          "Referer": LOOKMOVIE_BASE,
+          "Referer": referer || LOOKMOVIE_BASE,
           "User-Agent": USER_AGENT
         }
       }];
