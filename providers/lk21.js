@@ -1,6 +1,7 @@
 /**
  * lk21 - Layarkaca21 provider
- * Supports movies and TV shows via tv.lk21official.cc / tv.lk21official.love
+ * Supports movies via tv.lk21official.love
+ * TV shows via series.lk21.de (requires different URL structure)
  */
 "use strict";
 var __defProp = Object.defineProperty;
@@ -42,6 +43,7 @@ var __async = (__this, __arguments, generator) => {
 
 // Constants
 var BASE_URL = "https://tv.lk21official.love";
+var SERIES_URL = "https://series.lk21.de";
 var USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
 // HTTP helper
@@ -74,11 +76,16 @@ function makeRequest(url, options = {}) {
 }
 
 // Search for content by title - try multiple approaches
-function searchContent(title, year, mediaType) {
+function searchContent(title, year, mediaType, seasonNum, episodeNum) {
   return __async(this, null, function* () {
     console.log(`[LK21] Searching for: ${title} (${year})`);
 
-    // Generate potential slugs from title
+    // TV Shows use series.lk21.de domain
+    if (mediaType === 'tv') {
+      return yield searchSeriesContent(title, year, seasonNum, episodeNum);
+    }
+
+    // Movies use tv.lk21official.love domain
     const slugVariations = [];
 
     // Clean title - remove special chars and extra words
@@ -92,18 +99,13 @@ function searchContent(title, year, mediaType) {
     // Normalize spaces
     cleanTitle = cleanTitle.replace(/\s+/g, '-').replace(/-+/g, '-');
 
-    const typeSlug = mediaType === 'tv' ? 'tv' : 'movie';
+    const typeSlug = 'movie';
 
     // Try variations
     // 1. title-type-year (e.g., papa-zola-movie-2025)
     slugVariations.push(`${cleanTitle}-${typeSlug}-${year}`);
 
-    // 2. title-year (for some TV shows)
-    if (mediaType === 'tv') {
-      slugVariations.push(`${cleanTitle}-${year}`);
-    }
-
-    // 3. Just title (rare but possible)
+    // 2. Just title (rare but possible)
     slugVariations.push(cleanTitle);
 
     console.log(`[LK21] Trying slugs: ${slugVariations.join(', ')}`);
@@ -142,6 +144,64 @@ function searchContent(title, year, mediaType) {
   });
 }
 
+// Search for TV series content on series.lk21.de
+function searchSeriesContent(title, year, seasonNum, episodeNum) {
+  return __async(this, null, function* () {
+    // Clean title for slug
+    let cleanTitle = title.toLowerCase()
+      .replace(/[^a-z0-9\s-]/g, '')
+      .trim()
+      .replace(/\s+/g, '-')
+      .replace(/-+/g, '-');
+
+    // Try series page first
+    const seriesUrl = `${SERIES_URL}/${cleanTitle}-${year}`;
+    console.log(`[LK21] Trying series URL: ${seriesUrl}`);
+
+    try {
+      const response = yield makeRequest(seriesUrl);
+      const finalUrl = response.url;
+
+      // Check if redirected
+      if (finalUrl.includes('404') || finalUrl === SERIES_URL) {
+        console.log('[LK21] Series page not found');
+        return [];
+      }
+
+      const html = yield response.text();
+
+      // Look for episode data in JSON format
+      const episodeDataMatch = html.match(/\{"1":\[([^\]]+ episode[^\]]*)\]/i);
+      if (episodeDataMatch && seasonNum === 1) {
+        const episodesStr = episodeDataMatch[0];
+        // Parse episode slug
+        const episodePattern = new RegExp(`"episode_no":${episodeNum},"title":"[^"]*","slug":"([^"]+)"`, 'i');
+        const epMatch = episodesStr.match(episodePattern);
+
+        if (epMatch && epMatch[1]) {
+          const episodeSlug = epMatch[1];
+          const episodeUrl = `${SERIES_URL}/drama/${episodeSlug}`;
+          console.log(`[LK21] Found episode URL: ${episodeUrl}`);
+          return [episodeUrl];
+        }
+      }
+
+      // Alternative: look for data-attributes with episode info
+      const allEpisodesMatch = html.match(/\{"id":[^\}]+\}/);
+      if (allEpisodesMatch) {
+        console.log('[LK21] Found series data but episode parsing needs refinement');
+      }
+
+      // For now, return series page if we can't find specific episode
+      return [finalUrl];
+    } catch (e) {
+      console.log(`[LK21] Error accessing series: ${e.message}`);
+    }
+
+    return [];
+  });
+}
+
 // Extract stream data from movie/TV page
 function extractStreamFromPage(contentUrl, seasonNum = null, episodeNum = null) {
   return __async(this, null, function* () {
@@ -155,18 +215,48 @@ function extractStreamFromPage(contentUrl, seasonNum = null, episodeNum = null) 
       fullUrl = `${BASE_URL}/${contentUrl}`;
     }
 
+    // Handle series.lk21.de URLs
+    if (contentUrl.includes('series.lk21.de')) {
+      fullUrl = contentUrl;
+    }
+
     console.log(`[LK21] Fetching: ${fullUrl}`);
 
     const response = yield makeRequest(fullUrl);
     const html = yield response.text();
 
-    // Check if we got redirected to homepage
+    // Check if we got redirected to homepage or 404
     if (html.includes('data-web_type') && !html.includes('playeriframe')) {
       console.log('[LK21] Redirected to homepage or invalid page');
       return null;
     }
 
+    // Check for 404 page
+    if (html.includes('404 - Halaman Tidak Ditemukan')) {
+      console.log('[LK21] Page not found (404)');
+      return null;
+    }
+
     console.log(`[LK21] HTML length: ${html.length} characters`);
+
+    // Check for series.lk21.de specific content
+    if (contentUrl.includes('series.lk21.de')) {
+      // Series domain uses different player structure
+      // Look for embedded iframe or external player links
+      const playerMatch = html.match(/<iframe[^>]*src="([^"]+)"[^>]*frameborder/i);
+      if (playerMatch && playerMatch[1]) {
+        console.log(`[LK21] Found iframe src: ${playerMatch[1]}`);
+        // This would need different extraction logic based on the player
+        // For now, note that series support is limited
+      }
+
+      console.log('[LK21] Series domain support is limited - trying alternate extraction');
+      // Series site may use different hosting - check for common patterns
+      const m3u8Match = html.match(/(https?:\/\/[^\s'"]+\.m3u8[^\s'"]*)/i);
+      if (m3u8Match) {
+        return { masterPlaylistUrl: m3u8Match[1] };
+      }
+    }
 
     // Extract server data
     const servers = [];
@@ -313,7 +403,7 @@ function getStreams(tmdbId, mediaType = "movie", seasonNum = null, episodeNum = 
       console.log(`[LK21] TMDB Info: "${title}" (${year})`);
 
       // Search for content
-      const searchResults = yield searchContent(title, year, mediaType);
+      const searchResults = yield searchContent(title, year, mediaType, seasonNum, episodeNum);
 
       if (searchResults.length === 0) {
         console.log("[LK21] No search results found");
