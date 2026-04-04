@@ -416,9 +416,12 @@ function getStreams(tmdbId, mediaType = "movie", seasonNum = null, episodeNum = 
         const streamData = yield extractStreamFromPage(resultUrl, seasonNum, episodeNum);
 
         if (streamData && streamData.masterPlaylistUrl) {
+          // Build headers with proper referer chain
+          // Stream URLs come from emturbovid.com which gets referred from playeriframe.sbs
           const headers = {
             "Referer": "https://emturbovid.com/",
-            "User-Agent": USER_AGENT
+            "User-Agent": USER_AGENT,
+            "Origin": "https://emturbovid.com"
           };
 
           const nuvioStreams = [{
@@ -431,6 +434,7 @@ function getStreams(tmdbId, mediaType = "movie", seasonNum = null, episodeNum = 
           }];
 
           console.log("[LK21] Successfully found stream");
+          console.log(`[LK21] Stream headers: Referer=${headers.Referer}`);
           return nuvioStreams;
         }
       }
