@@ -823,6 +823,23 @@
       ]
     },
     {
+      "id": "vidsrc",
+      "name": "Vidsrc",
+      "description": "Vidsrc.ru streaming with auto quality selection for movies and TV shows",
+      "version": "1.0.0",
+      "author": "Nuvio Team",
+      "supportedTypes": [
+        "movie",
+        "tv"
+      ],
+      "filename": "providers/vidsrc.js",
+      "enabled": true,
+      "logo": "https://www.google.com/s2/favicons?domain=vidsrc.ru&sz=128",
+      "contentLanguage": [
+        "en"
+      ]
+    },
+    {
       "id": "xdmovies",
       "name": "XDmovies",
       "description": "XDmovies provider for Nuvio (Movies and TV Shows)",
