@@ -381,12 +381,52 @@ function extractM3u8FromIframe(iframeUrl) {
 }
 
 // Main function to get streams
+// tmdbId can be either a TMDB ID (numeric) or a site slug (string like "avatar-fire-ash-2025")
 function getStreams(tmdbId, mediaType = "movie", seasonNum = null, episodeNum = null) {
   return __async(this, null, function* () {
-    console.log(`[LK21] Fetching streams for TMDB ID: ${tmdbId}, Type: ${mediaType}`);
+    console.log(`[LK21] Fetching streams for ID: ${tmdbId}, Type: ${mediaType}`);
 
     try {
-      // Get TMDB info for title and year
+      // Check if tmdbId is actually a slug (contains letters/hyphens)
+      const isSlug = typeof tmdbId === 'string' && /[a-z]/i.test(tmdbId);
+
+      if (isSlug) {
+        // Direct slug lookup - skip TMDB API
+        console.log(`[LK21] Using slug directly: ${tmdbId}`);
+        const contentUrl = tmdbId.startsWith('http') ? tmdbId : `${BASE_URL}/${tmdbId}`;
+        const streamData = yield extractStreamFromPage(contentUrl, seasonNum, episodeNum);
+
+        if (streamData && streamData.masterPlaylistUrl) {
+          const headers = {
+            "Referer": "https://emturbovid.com/",
+            "User-Agent": USER_AGENT,
+            "Origin": "https://emturbovid.com"
+          };
+
+          // Extract title from slug
+          const titleParts = tmdbId.replace(/-\d{4}$/, '').split('-');
+          const title = titleParts.map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+          const yearMatch = tmdbId.match(/(\d{4})$/);
+          const year = yearMatch ? yearMatch[1] : 'Unknown';
+
+          const nuvioStreams = [{
+            name: "LK21",
+            title: `${title} (${year})`,
+            url: streamData.masterPlaylistUrl,
+            quality: "Auto",
+            type: "direct",
+            headers: headers
+          }];
+
+          console.log("[LK21] Successfully found stream");
+          return nuvioStreams;
+        }
+
+        console.log("[LK21] No stream data found for slug");
+        return [];
+      }
+
+      // Standard TMDB lookup
       const endpoint = mediaType === "tv" ? "tv" : "movie";
       const tmdbUrl = `https://api.themoviedb.org/3/${endpoint}/${tmdbId}?api_key=68e094699525b18a70bab2f86b1fa706`;
       const tmdbResponse = yield makeRequest(tmdbUrl);
@@ -417,8 +457,6 @@ function getStreams(tmdbId, mediaType = "movie", seasonNum = null, episodeNum = 
         const streamData = yield extractStreamFromPage(resultUrl, seasonNum, episodeNum);
 
         if (streamData && streamData.masterPlaylistUrl) {
-          // Build headers with proper referer chain
-          // Stream URLs come from emturbovid.com which gets referred from playeriframe.sbs
           const headers = {
             "Referer": "https://emturbovid.com/",
             "User-Agent": USER_AGENT,
